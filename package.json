@@ -1,0 +1,87 @@
+{
+  "name": "dsh-seven-inbox",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Attention-first session inbox for DeepSeek Harness that preserves native sidebar chrome, with persistent multi-workspace filtering (invert & reset), elevated Working shelf cards, and accurate running state.",
+  "license": "MIT",
+  "author": {
+    "name": "Seven7cx",
+    "url": "https://github.com/sevenqcx"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sevenqcx/dsh-seven-inbox.git"
+  },
+  "homepage": "https://github.com/sevenqcx/dsh-seven-inbox#readme",
+  "bugs": {
+    "url": "https://github.com/sevenqcx/dsh-seven-inbox/issues"
+  },
+  "keywords": [
+    "deepseek",
+    "harness",
+    "dsh",
+    "dsh-plugin",
+    "sidebar",
+    "inbox",
+    "workspace-filter"
+  ],
+  "icon": "icon.svg",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./model": "./lib/model.js",
+    "./workspace-filter": "./lib/workspace-filter.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "typert.js",
+    "lib/*.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "screenshots.json",
+    "assets/*",
+    "LICENSE",
+    "README.md",
+    "README.zh.md"
+  ],
+  "scripts": {
+    "test": "NODE_OPTIONS='--max-old-space-size=512' node --test-timeout=10000 --test test/*.test.js",
+    "check": "node --check index.js && node --check client.js && node --check typert.js && node --check lib/model.js && node --check lib/schemas.js && node --check lib/git-branch.js && node --check lib/snooze-presets.js && node --check lib/workspace-filter.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-workspace",
+        "@deepseek-ai/dsh-client-ui-session",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-api-gateway",
+        "@deepseek-ai/dsh-cordis-client-runner"
+      ],
+      "external": [
+        "zod"
+      ]
+    }
+  },
+  "engines": {
+    "dsh": ">=0.2.2-rc.1 <0.3.0 || >=0.2.3-rc.0 <0.3.0 || >=0.2.4-rc.0 <0.3.0 || >=0.2.5-rc.0 <0.3.0 || >=0.2.6-rc.0 <0.3.0"
+  },
+  "dependencies": {
+    "zod": "^4.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.1.0",
+    "@deepseek-ai/dsh-typert-protocol": ">=0.2.2-rc.1 <0.3.0 || >=0.2.3-rc.0 <0.3.0 || >=0.2.4-rc.0 <0.3.0 || >=0.2.5-rc.0 <0.3.0 || >=0.2.6-rc.0 <0.3.0"
+  }
+}
