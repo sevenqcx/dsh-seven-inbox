@@ -1,6 +1,6 @@
 {
   "name": "dsh-seven-inbox",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "description": "Attention-first session inbox for DeepSeek Harness that preserves native sidebar chrome, with persistent multi-workspace filtering (invert & reset), elevated Working shelf cards, and accurate running state.",
   "license": "MIT",

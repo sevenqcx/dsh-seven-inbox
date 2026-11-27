@@ -100,14 +100,24 @@ export default class SevenInboxService extends TypertRemoteService {
     this.followers = new Set();
     this.memberCache = new Map();
     this.rootSummaries = new Map();
+    this.memberToRoot = new Map();
+    this.dirtyRootIds = new Set();
+    this.blankSessions = new Map();
+    this.announcedRoots = new Map();
+    this.firstTurnRoots = new Set();
+    this.cardBuilds = new Map();
+    this.livePreviews = new WeakSet();
+    this.startupSessionChanges = new Set();
+    this.lifetime = new AbortController();
+    this.flushingDirty = null;
     this.lastSnapshotSignature = null;
     this.internalDomainWrites = 0;
     this.snapshotMutationEpoch = 0;
     this.currentSnapshot = { ...EMPTY_SNAPSHOT, generation: this.generation };
-    this.stats = { buildCount: 0, lastBuildMs: null, lastListMs: null, lastTreeMs: null, lastMemberMs: null, lastRoots: 0, lastMembers: 0, lastRetired: 0, lastTreeCalls: 0, lastMemberCalls: 0, lastMemberErrors: 0, lastAt: null };
+    this.stats = { buildCount: 0, targetedCount: 0, lastBuildMs: null, lastTargetedMs: null, lastListMs: null, lastTreeMs: null, lastMemberMs: null, lastRoots: 0, lastMembers: 0, lastRetired: 0, lastTreeCalls: 0, lastMemberCalls: 0, lastMemberErrors: 0, lastAt: null };
     this.refreshing = null;
     this.refreshAgain = false;
-    this.prepareLimit = createLimiter(2);
+    this.prepareLimit = createLimiter(4);
   }
 
   async [Service.init]() {
@@ -125,7 +135,10 @@ export default class SevenInboxService extends TypertRemoteService {
     ctx.effect(() => () => this.settingsDomain.close(), 'seven-inbox: settings domain');
     await this.ensureSnoozeSettings();
     ctx.effect(() => () => this.domain.close(), 'seven-inbox: domain');
-    ctx.effect(() => () => clearTimeout(this.wakeTimer), 'seven-inbox: wake timer');
+    ctx.effect(() => () => {
+      this.lifetime.abort();
+      clearTimeout(this.wakeTimer);
+    }, 'seven-inbox: background work');
     ctx.effect(() => ctx.typert.register(TYPERT), 'seven-inbox: strict Remote descriptors');
     ctx.effect(() => ctx.cordisInspect.register({
       manifest: {
@@ -157,8 +170,8 @@ export default class SevenInboxService extends TypertRemoteService {
     const trackPending = (sessionId, kind, identity) => {
       const id = randomUUID();
       this.pending.set(id, { sessionId, kind, identity });
-      this.requestRefresh();
-      return () => { this.pending.delete(id); this.requestRefresh(); };
+      this.requestSessionRefresh(sessionId);
+      return () => { this.pending.delete(id); this.requestSessionRefresh(sessionId); };
     };
     const onRequest = (kind, request, next) => {
       const sessionId = request.agent?.id;
@@ -216,29 +229,44 @@ export default class SevenInboxService extends TypertRemoteService {
       if (change.domain === DOMAIN || change.domain === SETTINGS_DOMAIN) this.requestRefresh();
     });
     ctx.on('session/event', (session, event) => {
-      if (!['turn/start', 'turn/end', 'user/message', 'model/selection'].includes(event.type)) return;
+      if (!['turn/start', 'turn/end', 'user/message', 'model/selection', 'session/title'].includes(event.type)) return;
       const live = ctx.sessions.get(session.id);
       if (live) {
         const prior = this.memberCache.get(session.id);
         try {
           this.memberCache.set(session.id, {
-            ...(prior?.title ? { title: prior.title } : {}),
+            title: event.type === 'session/title' ? projectionTitle(event.data?.title) : prior?.title ?? null,
             ...(event.type !== 'model/selection' && prior?.modelSelection !== undefined ? { modelSelection: prior.modelSelection } : {}),
             progress: this.projection.stateOf(live),
             header: live.header,
           });
         } catch { this.memberCache.delete(session.id); }
       }
-      this.requestRefresh();
+      if (event.type === 'turn/start' && this.blankSessions.has(session.id)) {
+        this.firstTurnRoots.add(session.id);
+        this.acceptSessionSummary({ ...this.blankSessions.get(session.id), blank: false, running: true, updatedAt: event.time });
+      }
+      const rootSummary = this.rootSummaries.get(session.id);
+      if (rootSummary && Number.isFinite(event.time)) {
+        rootSummary.updatedAt = Math.max(rootSummary.updatedAt ?? 0, event.time);
+      }
+      if (event.type === 'turn/start') this.handleSessionStatus(session.id, true);
+      else this.requestSessionRefresh(session.id);
     }, { global: true });
-    ctx.on('session/created', () => this.requestRefresh(), { global: true });
-    ctx.on('session/disposed', () => this.requestRefresh(), { global: true });
-    ctx.on('agent/status', () => this.requestRefresh(), { global: true });
-    ctx.on('agent/created', ({ agent }) => { this.ownerEpochs.set(agent.id, randomUUID()); this.requestRefresh(); }, { global: true });
-    ctx.on('agent/disposed', ({ agent }) => { this.ownerEpochs.set(agent.id, randomUUID()); this.requestRefresh(); }, { global: true });
-    for (const event of ['api-session/added', 'api-session/status', 'api-session/error', 'api-session/removed', 'subagent/start', 'subagent/end']) ctx.on(event, () => this.requestRefresh());
-    await this.refresh();
-    if (this.currentSnapshot.phase === 'unavailable') throw new Error(`Inbox initial baseline failed: ${this.currentSnapshot.error ?? 'unknown error'}`);
+    ctx.on('api-session/added', (summary) => this.acceptSessionSummary(summary));
+    ctx.on('session/disposed', (session) => {
+      this.blankSessions.delete(session.id);
+      this.announcedRoots.delete(session.id);
+      this.memberCache.delete(session.id);
+      if (this.memberToRoot.has(session.id) || this.rootSummaries.has(session.id)) this.requestRefresh();
+    }, { global: true });
+    ctx.on('agent/created', ({ agent }) => { this.ownerEpochs.set(agent.id, randomUUID()); }, { global: true });
+    ctx.on('agent/disposed', ({ agent }) => { this.ownerEpochs.set(agent.id, randomUUID()); }, { global: true });
+    ctx.on('api-session/status', (sessionId, running) => this.handleSessionStatus(sessionId, running));
+    ctx.on('api-session/error', (sessionId) => this.requestSessionRefresh(sessionId));
+    ctx.on('subagent/start', (info, root) => this.requestSessionRefresh(typeof root === 'string' ? root : (info?.parentSessionId ?? info?.id ?? null)));
+    ctx.on('subagent/end', (info, root) => this.requestSessionRefresh(typeof root === 'string' ? root : (info?.parentSessionId ?? info?.id ?? null)));
+    void this.refresh();
   }
 
   requireOwner() {
@@ -325,6 +353,7 @@ export default class SevenInboxService extends TypertRemoteService {
   }
 
   requestRefresh() {
+    if (this.lifetime.signal.aborted) return;
     if (this.refreshing) { this.refreshAgain = true; return this.refreshing; }
     this.refreshing = (async () => {
       try {
@@ -335,14 +364,38 @@ export default class SevenInboxService extends TypertRemoteService {
         do {
           this.refreshAgain = false;
           const startEpoch = this.snapshotMutationEpoch ?? 0;
+          this.targetedDuringBuild = new Set();
           const next = await this.buildSnapshot();
+          if (this.lifetime.signal.aborted) return;
           if ((this.snapshotMutationEpoch ?? 0) !== startEpoch) {
             this.refreshAgain = true;
             continue;
           }
+          const fresher = this.targetedDuringBuild;
+          this.targetedDuringBuild = null;
+          if (fresher.size && Array.isArray(next?.cards)) {
+            const live = new Map((this.currentSnapshot?.cards ?? []).map((card) => [card.sessionId, card]));
+            const merged = new Map(next.cards.map((card) => [card.sessionId, card]));
+            for (const id of fresher) {
+              const newer = live.get(id);
+              const older = merged.get(id);
+              if (newer && (older ? newer.revision >= older.revision : this.announcedRoots.has(id))) merged.set(id, newer);
+            }
+            next.cards = [...merged.values()];
+          }
+          this.memberToRoot = new Map(next.cards.flatMap((card) => [
+            [card.sessionId, card.sessionId],
+            ...(card.members ?? []).map((member) => [member.sessionId, card.sessionId]),
+          ]));
+          this.scheduleWakeTimer(next.cards);
           this.publishSnapshot(next);
+          for (const id of this.startupSessionChanges) {
+            if (this.memberToRoot.has(id)) this.requestSessionRefresh(id);
+          }
+          this.startupSessionChanges.clear();
         } while (this.refreshAgain);
       } catch (error) {
+        if (this.lifetime.signal.aborted) return;
         this.ctx.logger?.warn?.('seven-inbox refresh failed', error);
         this.lastSnapshotSignature = null;
         this.currentSnapshot = { ...this.currentSnapshot, phase: 'unavailable', error: error instanceof Error ? error.message : String(error), revision: (this.currentSnapshot?.revision ?? 0) + 1 };
@@ -350,6 +403,93 @@ export default class SevenInboxService extends TypertRemoteService {
       } finally { this.refreshing = null; }
     })();
     return this.refreshing;
+  }
+
+  acceptSessionSummary(summary) {
+    if (summary.origin === 'subagent') {
+      if (this.memberToRoot.has(summary.sessionId)) return this.requestSessionRefresh(summary.sessionId);
+      return;
+    }
+    const id = summary.sessionId;
+    if (summary.blank) {
+      this.blankSessions.set(id, summary);
+      return;
+    }
+    this.blankSessions.delete(id);
+    const previous = this.rootSummaries.get(id);
+    const latest = { ...summary, updatedAt: Math.max(previous?.updatedAt ?? 0, summary.updatedAt ?? 0) };
+    this.announcedRoots.set(id, latest);
+    this.rootSummaries.set(id, latest);
+    return this.handleSessionStatus(id, summary.running);
+  }
+
+  handleSessionStatus(sessionId, running) {
+    if (this.lifetime.signal.aborted) return;
+    const rootId = this.memberToRoot.get(sessionId) ?? sessionId;
+    const summary = this.rootSummaries.get(rootId);
+    if (summary && typeof running === 'boolean') this.publishLivePreview(summary, sessionId, running);
+    return this.requestSessionRefresh(sessionId);
+  }
+
+  publishLivePreview(summary, sessionId, running) {
+    const rootId = summary.sessionId;
+    const previous = this.currentSnapshot.cards.find((card) => card.sessionId === rootId);
+    const before = previous?.members.find((member) => member.sessionId === sessionId && !member.retired);
+    const cached = this.memberCache.get(sessionId);
+    if ((!before && sessionId !== rootId) || (!before && !running && !cached)) return;
+    const observed = cached?.progress ?? before?.progress ?? null;
+    // A host idle notification supersedes an unfinished turn for display only.
+    const progress = !running && observed?.turn && !observed.turn.end ? { ...observed, turn: null } : observed;
+    if (before?.runtime?.running === running && before.progress === progress) return;
+    const metadata = this.domain.table('records').get(rootId)
+      ?? { revision: 0, settledThrough: {}, settledAt: null, snooze: null };
+    const member = {
+      ...before, ...cached, sessionId, progress,
+      label: before?.label ?? projectionTitle(summary.projections?.values?.title) ?? summary.cwd ?? rootId,
+      runtime: { ...before?.runtime, running, queue: before?.runtime?.queue ?? null, completeness: 'unavailable' },
+    };
+    const members = before
+      ? previous.members.map((item) => item === before ? member : item)
+      : [member, ...(previous?.members ?? [])];
+    const pending = (previous?.pending ?? []).filter((item) => item.sessionId !== sessionId);
+    pending.push(...this.pendingFor(member, member.pendingInput));
+    const card = this.assembleCard(summary, metadata, members, pending, false, previous?.treeError ?? null);
+    this.livePreviews.add(card);
+    this.publishRefreshedCard(card);
+  }
+
+  requestSessionRefresh(sessionId) {
+    if (this.lifetime.signal.aborted || this.blankSessions.has(sessionId)) return;
+    if (!sessionId || this.refresh !== SevenInboxService.prototype.refresh) return this.requestRefresh();
+    const rootId = this.memberToRoot.get(sessionId)
+      ?? (this.rootSummaries.has(sessionId) ? sessionId : null);
+    if (!rootId) {
+      if (this.currentSnapshot.phase === 'building') this.startupSessionChanges.add(sessionId);
+      else if (this.ctx.sessions?.get(sessionId)?.header?.origin !== 'subagent' && !this.refreshing) return this.requestRefresh();
+      return;
+    }
+    this.dirtyRootIds.add(rootId);
+    if (this.flushingDirty) return this.flushingDirty;
+    this.flushingDirty = (async () => {
+      try {
+        // Yield two microtasks so synchronous `turn/end` + `agent/status=idle` + `api-session/status`
+        // coalesce into one targeted card refresh instead of publishing intermediate stale states.
+        await Promise.resolve();
+        await Promise.resolve();
+        while (this.dirtyRootIds.size > 0) {
+          const batch = [...this.dirtyRootIds];
+          this.dirtyRootIds.clear();
+          await this.refreshSessionCards(batch);
+        }
+      } catch (error) {
+        this.ctx.logger?.warn?.('seven-inbox targeted refresh failed, falling back to full refresh', error);
+        this.dirtyRootIds.clear();
+        void this.requestRefresh();
+      } finally {
+        this.flushingDirty = null;
+      }
+    })();
+    return this.flushingDirty;
   }
 
   refresh() { return this.requestRefresh(); }
@@ -421,13 +561,27 @@ export default class SevenInboxService extends TypertRemoteService {
     return result;
   }
 
+  async buildCardForRoot(summary, runMember, timings, workspaces) {
+    const id = summary.sessionId;
+    const previous = this.cardBuilds.get(id);
+    const build = (async () => {
+      if (previous) await previous.catch(() => {});
+      return this.buildCard(this.rootSummaries.get(id) ?? summary, runMember, timings, workspaces);
+    })();
+    this.cardBuilds.set(id, build);
+    try { return await build; }
+    finally { if (this.cardBuilds.get(id) === build) this.cardBuilds.delete(id); }
+  }
+
   async buildCard(summary, runMember, timings = null, workspaceBySessionId = null) {
     const rootId = summary.sessionId;
+    const signal = this.lifetime.signal;
+    signal.throwIfAborted();
     let descendants = [];
     let treeError = null;
     if (timings) timings.treeCalls += 1;
     const treeStart = performance.now();
-    try { descendants = await this.ctx.subagents.listDescendants(rootId); }
+    try { descendants = await this.ctx.subagents.listDescendants(rootId, signal); }
     catch (error) { treeError = error instanceof Error ? error.message : String(error); }
     finally { if (timings) timings.treeMs += performance.now() - treeStart; }
     const diagnostic = descendants.find((item) => item.kind === 'diagnostic');
@@ -442,14 +596,16 @@ export default class SevenInboxService extends TypertRemoteService {
     if (timings) timings.memberCalls += rows.length;
     const memberStart = performance.now();
     const currentMembers = await Promise.all(rows.map((row) => runMember(async () => {
-      try { return await this.readMember(row.sessionId, row.label, new AbortController().signal); }
+      try { return await this.readMember(row.sessionId, row.label, signal); }
       catch (error) { if (timings) timings.memberErrors += 1; return { sessionId: row.sessionId, label: row.label, error: error instanceof Error ? error.message : String(error) }; }
     })));
+    signal.throwIfAborted();
     if (timings) timings.memberMs += performance.now() - memberStart;
     const table = this.domain.table('records');
     let metadata = table.get(rootId);
     if (!metadata) {
-      const baseline = resultMap(currentMembers);
+      // A session observed before its first turn has no historical results to acknowledge.
+      const baseline = this.firstTurnRoots.has(rootId) ? {} : resultMap(currentMembers);
       const now = Date.now();
       metadata = {
         revision: 0, settledThrough: baseline, settledAt: null, settledOverride: null, unsettledAt: null,
@@ -459,6 +615,7 @@ export default class SevenInboxService extends TypertRemoteService {
       };
       await this.withInternalDomainWrite(() => table.put(rootId, metadata));
     }
+    this.firstTurnRoots.delete(rootId);
     const present = new Set(rows.map((row) => row.sessionId));
     const retired = Object.values(metadata.knownMembers ?? {}).filter((saved) => !present.has(saved.progress.sessionId) && (
       comparePoint(saved.progress.latestResult, metadata.settledThrough[saved.progress.sessionId]) || saved.pending.length > 0 || saved.runtime.running
@@ -476,11 +633,19 @@ export default class SevenInboxService extends TypertRemoteService {
     if (stable(knownMembers) !== stable(metadata.knownMembers ?? {})) {
       metadata = await this.withInternalDomainWrite(() => table.update(rootId, (current) => ({ ...current, knownMembers })));
     }
+    const card = this.assembleCard(summary, metadata, members, pending, complete, treeError, workspaceBySessionId);
+    this.memberToRoot.set(rootId, rootId);
+    for (const member of members) this.memberToRoot.set(member.sessionId, rootId);
+    return card;
+  }
+
+  assembleCard(summary, metadata, members, pending, complete, treeError, workspaceBySessionId) {
+    const rootId = summary.sessionId;
     const runtime = {
       running: members.some((member) => member.runtime?.running),
       queue: members.every((member) => Array.isArray(member.runtime?.queue)) ? members.flatMap((member) => member.runtime.queue) : null,
       completeness: complete ? 'complete' : 'unavailable',
-      startedAt: summary.updatedAt,
+      startedAt: summary.updatedAt ?? null,
     };
     const rootHeader = members[0]?.header ?? null;
     const createdAt = finiteEpochMs(rootHeader?.createdAt) ?? finiteEpochMs(summary.createdAt) ?? null;
@@ -498,9 +663,8 @@ export default class SevenInboxService extends TypertRemoteService {
       snoozeEffect: { ...snoozeEffect, woke: snoozeEffect.woke && !acknowledged },
       runtime, pending, now: Date.now(),
     });
-    const workspace = workspaceBySessionId
-      ? workspaceBySessionId.get(rootId)
-      : this.ctx.workspaceRegistry.list().find((item) => item.sessionIds.includes(rootId));
+    const workspace = workspaceBySessionId?.get(rootId)
+      ?? this.ctx.workspaceRegistry.list().find((item) => item.sessionIds.includes(rootId) || (summary.cwd && item.path === summary.cwd));
     const headerConfig = rootHeader?.config && typeof rootHeader.config === 'object'
       ? rootHeader.config
       : rootHeader;
@@ -521,9 +685,9 @@ export default class SevenInboxService extends TypertRemoteService {
     const card = {
       sessionId: rootId,
       createdAt,
-      cold: Boolean(!treeError && currentMembers[0]?.cold === true && members.slice(1).every((member) =>
+      cold: Boolean(!treeError && members[0]?.cold === true && members.slice(1).every((member) =>
         member.progress && !member.error && member.runtime?.completeness === 'complete' && Array.isArray(member.runtime.queue))),
-      title: projectionTitle(summary.projections?.values?.title) ?? members[0]?.title ?? summary.cwd ?? rootId,
+      title: members[0]?.title ?? projectionTitle(summary.projections?.values?.title) ?? summary.cwd ?? rootId,
       cwd,
       /* T3 SidebarThreadRow metaLine: branch/worktree from .git/HEAD (no git spawn). */
       branch: gitInfo.branch,
@@ -541,26 +705,69 @@ export default class SevenInboxService extends TypertRemoteService {
     return card;
   }
 
+  publishStartupList(roots, listingById, workspaceBySessionId) {
+    const table = this.domain.table('records');
+    const cards = roots.map((summary) => {
+      const id = summary.sessionId;
+      const metadata = table.get(id) ?? { revision: 0, settledThrough: {}, settledAt: null, snooze: null };
+      const saved = metadata.knownMembers ?? {};
+      const ids = [id, ...Object.keys(saved).filter((memberId) => memberId !== id)];
+      const members = ids.map((sessionId) => {
+        const member = saved[sessionId];
+        const running = listingById.get(sessionId)?.running === true;
+        const progress = member?.progress ?? null;
+        return {
+          sessionId,
+          label: member?.label ?? projectionTitle(summary.projections?.values?.title) ?? summary.cwd ?? id,
+          title: member?.title ?? null,
+          // Use durable history for display. An unfinished turn from the previous
+          // process does not by itself show that work is currently running.
+          progress: progress?.turn && !progress.turn.end && !running ? { ...progress, turn: null } : progress,
+          runtime: { running, queue: null, startedAt: member?.runtime.startedAt ?? null, completeness: 'unavailable' },
+        };
+      });
+      const pending = members.flatMap((member) => this.pendingFor(member));
+      return this.assembleCard(summary, metadata, members, pending, false, null, workspaceBySessionId);
+    });
+    const existing = new Map(this.currentSnapshot.cards.map((card) => [card.sessionId, card]));
+    this.publishSnapshot({ ...this.currentSnapshot, cards: cards.map((card) => existing.get(card.sessionId) ?? card), snoozeSettings: this.readSnoozeSettings() });
+  }
+
   async buildSnapshot() {
     const buildStart = performance.now();
     const timings = { listMs: 0, treeMs: 0, memberMs: 0, treeCalls: 0, memberCalls: 0, memberErrors: 0, retired: 0 };
     this.refreshGatewayPendingSeeds();
     const listStart = performance.now();
-    const listing = await this.ctx.sessionController.list({}, new AbortController().signal);
+    const signal = this.lifetime.signal;
+    const listing = await this.ctx.sessionController.list({}, signal);
+    signal.throwIfAborted();
     timings.listMs = performance.now() - listStart;
-    const roots = listing.items.filter((item) => item.origin !== 'subagent' && !item.blank);
-    this.rootSummaries = new Map(roots.map((item) => [item.sessionId, item]));
+    const summaries = new Map();
+    for (const summary of listing.items) {
+      if (summary.origin === 'subagent') continue;
+      if (summary.blank && !this.announcedRoots.has(summary.sessionId)) this.blankSessions.set(summary.sessionId, summary);
+      else if (!summary.blank) summaries.set(summary.sessionId, summary);
+    }
+    for (const [id, summary] of this.announcedRoots) {
+      if ((summaries.get(id)?.updatedAt ?? 0) <= summary.updatedAt) summaries.set(id, summary);
+    }
+    this.rootSummaries = summaries;
+    const roots = [...summaries.values()];
     const workspaceBySessionId = new Map();
     for (const workspace of this.ctx.workspaceRegistry.list()) {
       for (const sid of workspace.sessionIds ?? []) workspaceBySessionId.set(sid, workspace);
     }
-    const runMember = createLimiter(2);
-    const cards = await mapLimit(roots, 2, (summary) => this.buildCard(summary, runMember, timings, workspaceBySessionId));
-    const now = Date.now();
-    this.scheduleWakeTimer(cards, now);
-    const receipts = this.computeReceipts(now);
+    if (this.currentSnapshot.phase === 'building' && !this.startupListPublished) {
+      this.startupListPublished = true;
+      const listingById = new Map(listing.items.map((item) => [item.sessionId, item]));
+      this.publishStartupList(roots, listingById, workspaceBySessionId);
+    }
+    const runMember = createLimiter(4);
+    const cards = await mapLimit(roots, 8, (summary) => this.buildCardForRoot(summary, runMember, timings, workspaceBySessionId));
+    const receipts = this.computeReceipts();
     const result = { ...EMPTY_SNAPSHOT, generation: this.generation, phase: 'ready', cards, receipts, snoozeSettings:this.readSnoozeSettings() };
     this.stats = {
+      ...this.stats,
       buildCount: (this.stats?.buildCount ?? 0) + 1,
       lastBuildMs: performance.now() - buildStart,
       lastListMs: timings.listMs, lastTreeMs: timings.treeMs, lastMemberMs: timings.memberMs,
@@ -571,33 +778,66 @@ export default class SevenInboxService extends TypertRemoteService {
     return result;
   }
 
-  async refreshSessionCard(sessionId, signal) {
+  async refreshSessionCards(sessionIds, signal) {
     if (this.refresh !== SevenInboxService.prototype.refresh) return this.refresh();
-    if (this.currentSnapshot?.phase !== 'ready' || !this.rootSummaries?.has(sessionId)) return this.refresh();
+    const uniqueIds = [...new Set((sessionIds ?? []).filter(Boolean))];
+    if (!uniqueIds.length) return;
+    if (uniqueIds.some((id) => !this.rootSummaries.has(id))) {
+      return this.refresh();
+    }
+    const started = performance.now();
     this.refreshGatewayPendingSeeds();
-    const updatedCard = await this.buildCard(this.rootSummaries.get(sessionId), createLimiter(2), null, null);
-    if (signal?.aborted) return;
+    const workspaceBySessionId = new Map();
+    for (const workspace of this.ctx.workspaceRegistry.list()) {
+      for (const sid of workspace.sessionIds ?? []) workspaceBySessionId.set(sid, workspace);
+    }
+    const runMember = createLimiter(4);
+    await mapLimit(uniqueIds, 4, async (id) => {
+      const summary = this.rootSummaries.get(id);
+      if (!summary) return;
+      const before = this.currentSnapshot.cards.find((card) => card.sessionId === id);
+      const card = await this.buildCardForRoot(summary, runMember, null, workspaceBySessionId);
+      const current = this.currentSnapshot.cards.find((item) => item.sessionId === id);
+      if (!signal?.aborted && (current === before || !this.livePreviews.has(current))) this.publishRefreshedCard(card, started);
+    });
+  }
+
+  publishRefreshedCard(updatedCard, started) {
     const existingCards = this.currentSnapshot?.cards ?? [];
-    const idx = existingCards.findIndex((item) => item.sessionId === sessionId);
-    if (idx < 0) return this.refresh();
-    if ((existingCards[idx]?.revision ?? 0) > updatedCard.revision) return;
+    const id = updatedCard.sessionId;
+    if (this.lifetime.signal.aborted || !this.rootSummaries.has(id)) return;
+    const idx = existingCards.findIndex((card) => card.sessionId === id);
     const existingCard = existingCards[idx];
+    if ((existingCard?.revision ?? 0) > updatedCard.revision) return;
     const now = Date.now();
     if (
       existingCard?.context
       && updatedCard.context
       && stable({ ...existingCard, context: null }) === stable({ ...updatedCard, context: null })
     ) {
-      const verified = this.verifyContext(existingCard.context, sessionId, existingCard.revision);
-      if (verified && verified.expiresAt > now + (CONTEXT_TTL / 2)) {
-        updatedCard.context = existingCard.context;
-      }
+      const verified = this.verifyContext(existingCard.context, id, existingCard.revision);
+      if (verified && verified.expiresAt > now + (CONTEXT_TTL / 2)) return;
     }
     const cards = existingCards.slice();
-    cards[idx] = updatedCard;
+    if (idx < 0) cards.push(updatedCard);
+    else cards[idx] = updatedCard;
     this.scheduleWakeTimer(cards, now);
     const receipts = this.computeReceipts(now);
+    // Preserve the newer card when a concurrent full build publishes its results.
+    this.targetedDuringBuild?.add(id);
+    if (started !== undefined) {
+      this.stats = {
+        ...this.stats,
+        targetedCount: (this.stats?.targetedCount ?? 0) + 1,
+        lastTargetedMs: performance.now() - started,
+        lastAt: now,
+      };
+    }
     this.publishSnapshot({ ...this.currentSnapshot, cards, receipts, snoozeSettings: this.readSnoozeSettings() });
+  }
+
+  async refreshSessionCard(sessionId, signal) {
+    return this.refreshSessionCards([sessionId], signal);
   }
 
   async reclassifyCardInSnapshot(sessionId, savedRecord) {
@@ -681,11 +921,6 @@ export default class SevenInboxService extends TypertRemoteService {
 
   async snapshot(_request, _signal) {
     this.requireOwner();
-    if (this.refresh !== SevenInboxService.prototype.refresh || this.currentSnapshot?.phase !== 'ready') {
-      await this.refresh();
-    } else if (this.refreshing) {
-      await this.refreshing;
-    }
     return clone(this.currentSnapshot);
   }
 
@@ -739,14 +974,13 @@ export default class SevenInboxService extends TypertRemoteService {
     const listener = (snapshot) => { queued = snapshot; wake?.(); };
     this.followers.add(listener);
     const abort = () => { wake?.(); };
+    const lifetime = this.lifetime.signal;
     signal.addEventListener('abort', abort);
+    lifetime.addEventListener('abort', abort);
     try {
-      if (this.refresh !== SevenInboxService.prototype.refresh || this.currentSnapshot?.phase !== 'ready') {
-        await this.refresh();
-      }
       queued = this.currentSnapshot;
       let lastRevision = -1;
-      while (!signal.aborted) {
+      while (!signal.aborted && !lifetime.aborted) {
         if (queued && queued.revision !== lastRevision) {
           const next = queued; queued = null; lastRevision = next.revision;
           yield clone(next);
@@ -758,6 +992,7 @@ export default class SevenInboxService extends TypertRemoteService {
     } finally {
       this.followers.delete(listener);
       signal.removeEventListener('abort', abort);
+      lifetime.removeEventListener('abort', abort);
       wake?.();
     }
   }
