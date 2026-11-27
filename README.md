@@ -1,55 +1,64 @@
-# dsh-seven-inbox (Seven Inbox)
+# dsh-seven-inbox（Seven 收件箱）
 
-[中文说明](README.zh.md)
+[English](README.en.md)
 
-An attention-first session inbox sidebar for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) that replaces only the workspace list while preserving native DSH sidebar chrome, theme, top bar, and footer.
+面向注意力流转的 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 会话收件箱插件：只替换工作区列表区域，完整保留 DSH 原生侧栏框架、顶栏、底栏与宿主主题。
 
-## Screenshots
+## 界面预览
 
-| Light Mode | Dark Mode | Multi-Workspace Filter |
+| 浅色模式 | 深色模式 | 多工作区筛选（反选与记忆） |
 | :---: | :---: | :---: |
-| ![Light Mode](assets/screenshot-1-light.png) | ![Dark Mode](assets/screenshot-2-dark.png) | ![Multi-Workspace Filter](assets/screenshot-3-filter.png) |
+| ![浅色模式](assets/screenshot-1-light.png) | ![深色模式](assets/screenshot-2-dark.png) | ![多工作区筛选](assets/screenshot-3-filter.png) |
 
-## Features
+## 主要特性
 
-- **Preserves native DSH sidebar chrome**: Replaces only the `sidebar.workspaces` region so the host's native header, New Session button, panel navigation, footer, and theme colors remain intact.
-- **Attention-first shelves with distinct hierarchy**:
-  - **Active & Needs Input**: Surfaces sessions waiting for approval or user input and unread completed turns at the top.
-  - **Working (elevated card)**: Groups actively running threads inside a bottom-anchored floating card with a live pulse dot, count pill, and active-row indicator in both light and dark themes.
-  - **Snoozed & Settled**: Separates deferred threads with a warm amber pill header and archived/settled threads with a subtle divider; supports custom snooze presets, quick settle, pin, batch selection, and undo.
-- **Persistent multi-workspace filtering**:
-  - Click any workspace in the filter popover to toggle multi-selection directly without holding Shift.
-  - Automatically remembers selected workspaces in `localStorage` (`dsh-seven-inbox:workspace-filter`) and prunes deleted workspaces.
-  - Displays a compact trigger chip (workspace monogram for single selection, funnel icon + `N/M` badge for multi-selection).
-  - Includes a sticky footer bar with **Invert** (to quickly exclude selected workspaces) and **Reset** actions.
-- **Accurate running state**: Filters out passive context queue entries (`placement: "context"`, such as background memory injections) so idle sessions are not falsely marked as Working.
-- **Switchable view**: Toggle back and forth between Seven Inbox and the native Workspaces view anytime from the sidebar panel list or Settings.
+- **保留原生侧栏框架**：仅接管工作区列表区域，保留 DSH 原生顶栏、新建会话按钮、面板入口、设置底栏与当前浅/深色主题。
+- **清晰的注意力分组与视觉层次**：
+  - **待输入与活跃**：将等待确认/输入和刚完成的未读会话优先展示在顶部。
+  - **运行中悬浮卡片**：将正在执行的会话收进沉底悬浮卡片，浅色与深色模式均配有脉冲蓝点、计数徽标和当前会话高亮条。
+  - **已暂缓与已收尾**：暂缓分组采用琥珀色胶囊样式，收尾分组采用轻分隔样式；支持自定义暂缓预设、快捷收尾、置顶、多选批量操作与撤销。
+- **工作区多选筛选、记忆与反选**：
+  - 点击筛选面板中的工作区即可直接勾选多选，无需按住 Shift。
+  - 自动持久化筛选状态并在重开后恢复，同时自动清理已移除的工作区。
+  - 筛选按钮单选时显示项目徽章，多选时自动切换为 `漏斗 + N/M` 计数胶囊。
+  - 底部操作栏提供「反选」（快速排除指定工作区）与「重置」按钮。
+- **精准运行状态识别**：派生运行状态时自动过滤 `placement: "context"` 的被动上下文队列（如记忆插件静默注入），避免空闲会话误报为「运行中」。
+- **随时切回原生视图**：可通过侧栏入口或设置页一键在「Seven 收件箱」与原生「工作区视图」之间切换。
 
-## Installation
+## 安装
 
-Install directly from GitHub via the DSH CLI:
+推荐优先通过 **npm** 安装（免构建脚本授权）：
+
+- 在 DeepSeek Harness 客户端中打开 **插件 → 添加插件**，输入 `dsh-seven-inbox` 安装并启用；
+- 或通过 DSH 命令行安装：
+
+```sh
+dsh plugin add dsh-seven-inbox
+```
+
+同时保留 **GitHub** 安装通道：
 
 ```sh
 dsh plugin add https://github.com/sevenqcx/dsh-seven-inbox
 ```
 
-Or install a versioned release tarball from [GitHub Releases](https://github.com/sevenqcx/dsh-seven-inbox/releases):
+或安装 [GitHub Releases](https://github.com/sevenqcx/dsh-seven-inbox/releases) 中的正式发行包：
 
 ```sh
-dsh plugin add https://github.com/sevenqcx/dsh-seven-inbox/releases/download/v1.0.0/dsh-seven-inbox-1.0.0.tgz
+dsh plugin add https://github.com/sevenqcx/dsh-seven-inbox/releases/download/v1.0.1/dsh-seven-inbox-1.0.1.tgz
 ```
 
-Restart DeepSeek Harness after installation so the host loads the `sevenInbox` service and client bundle.
+安装完成后重启 DeepSeek Harness 即可生效。
 
-## Development & Testing
+## 检查与测试
 
 ```sh
 npm run check
 npm test
 ```
 
-## Credits & License
+## 致谢与许可
 
-Built on top of the MIT-licensed attention-inbox architecture originally created by [tungloong](https://github.com/tungloong), extended with native chrome preservation, elevated light/dark shelf styling, persistent multi-workspace filtering with invert/reset controls, and passive-context queue filtering.
+本插件基于 [tungloong](https://github.com/tungloong) 开源的 MIT 许可注意力收件箱核心构建，在其基础上整合了原生侧栏框架保留、浅/深色悬浮卡片与分组层次美化、多工作区持久筛选（含反选/重置）以及被动上下文队列误报修复。
 
-Licensed under the [MIT License](LICENSE).
+基于 [MIT License](LICENSE) 开源。
