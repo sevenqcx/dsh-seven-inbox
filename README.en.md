@@ -23,7 +23,7 @@ An attention-first session inbox sidebar for [DeepSeek Harness](https://github.c
   - Displays a compact trigger chip (workspace monogram for single selection, funnel icon + `N/M` badge for multi-selection).
   - Includes a sticky footer bar with **Invert** (to quickly exclude selected workspaces) and **Reset** actions.
 - **Accurate running state**: Filters out passive context queue entries (`placement: "context"`, such as background memory injections) so idle sessions are not falsely marked as Working.
-- **Switchable view**: Toggle back and forth between Seven Inbox and the native Workspaces view anytime from the sidebar panel list or Settings.
+- **Native-aligned header & bidirectional view switcher**: Mirrors DSH's native Workspaces header (section title with compact filter pill on the left; expandable search, view options, and add project on the right). Switch seamlessly between **Inbox**, **WorkSpace**, **Workspace Tree**, and **In one list** from the same view-options menu in either view, without cluttering the sidebar panel list (Settings toggle remains available).
 
 ## Installation
 
@@ -45,7 +45,7 @@ dsh plugin add https://github.com/sevenqcx/dsh-seven-inbox
 Or install a versioned release tarball from [GitHub Releases](https://github.com/sevenqcx/dsh-seven-inbox/releases):
 
 ```sh
-dsh plugin add https://github.com/sevenqcx/dsh-seven-inbox/releases/download/v1.0.1/dsh-seven-inbox-1.0.1.tgz
+dsh plugin add https://github.com/sevenqcx/dsh-seven-inbox/releases/download/v1.0.2/dsh-seven-inbox-1.0.2.tgz
 ```
 
 Restart DeepSeek Harness after installation so the host loads the `sevenInbox` service and client bundle.

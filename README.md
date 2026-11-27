@@ -23,7 +23,7 @@
   - 筛选按钮单选时显示项目徽章，多选时自动切换为 `漏斗 + N/M` 计数胶囊。
   - 底部操作栏提供「反选」（快速排除指定工作区）与「重置」按钮。
 - **精准运行状态识别**：派生运行状态时自动过滤 `placement: "context"` 的被动上下文队列（如记忆插件静默注入），避免空闲会话误报为「运行中」。
-- **随时切回原生视图**：可通过侧栏入口或设置页一键在「Seven 收件箱」与原生「工作区视图」之间切换。
+- **与原生工作区一致的顶部栏与双向视图切换**：收件箱顶部栏采用与 DSH 原生「工作区」一致的布局（左侧标题与紧凑筛选徽标，右侧展开式搜索、视图选项与添加项目）；点视图选项图标即可在「收件箱 / 按工作区 / 按工作区树 / 单列表」之间直接来回切换，不再往侧边栏多塞单独的切换行（设置页开关依然保留）。
 
 ## 安装
 
@@ -45,7 +45,7 @@ dsh plugin add https://github.com/sevenqcx/dsh-seven-inbox
 或安装 [GitHub Releases](https://github.com/sevenqcx/dsh-seven-inbox/releases) 中的正式发行包：
 
 ```sh
-dsh plugin add https://github.com/sevenqcx/dsh-seven-inbox/releases/download/v1.0.1/dsh-seven-inbox-1.0.1.tgz
+dsh plugin add https://github.com/sevenqcx/dsh-seven-inbox/releases/download/v1.0.2/dsh-seven-inbox-1.0.2.tgz
 ```
 
 安装完成后重启 DeepSeek Harness 即可生效。

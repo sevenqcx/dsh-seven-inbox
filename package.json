@@ -1,6 +1,6 @@
 {
   "name": "dsh-seven-inbox",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "type": "module",
   "description": "保留 DSH 原生侧栏框架的注意力会话收件箱插件，支持工作区多选筛选与记忆（含反选/重置）、运行中悬浮卡片和精准状态识别。",
   "license": "MIT",
