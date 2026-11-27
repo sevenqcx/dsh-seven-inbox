@@ -27,28 +27,28 @@ An attention-first session inbox sidebar for [DeepSeek Harness](https://github.c
 
 ## Installation
 
+> The complete installation guide (three install channels, post-install checks, upgrade, uninstall, troubleshooting) is maintained in Chinese: **[安装说明](docs/安装说明.md)**.
+
 Install from **npm** (recommended):
 
-- Open **Plugins → Add plugin** in DeepSeek Harness and enter `dsh-seven-inbox`;
-- Or via the DSH CLI:
+1. Open **Plugins → Add plugin** in DeepSeek Harness;
+2. Enter `dsh-seven-inbox`, then install and enable it;
+3. Quit DeepSeek Harness completely and reopen it.
 
 ```sh
 dsh plugin add dsh-seven-inbox
 ```
 
-Or install from **GitHub**:
+The other two channels work the same way:
 
 ```sh
+# from the GitHub repository
 dsh plugin add https://github.com/sevenqcx/dsh-seven-inbox
-```
 
-Or install a versioned release tarball from [GitHub Releases](https://github.com/sevenqcx/dsh-seven-inbox/releases):
-
-```sh
+# a pinned release tarball
 dsh plugin add https://github.com/sevenqcx/dsh-seven-inbox/releases/download/v1.0.2/dsh-seven-inbox-1.0.2.tgz
 ```
 
-Restart DeepSeek Harness after installation so the host loads the `sevenInbox` service and client bundle.
 
 ## Development & Testing
 

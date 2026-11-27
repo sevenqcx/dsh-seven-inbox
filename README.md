@@ -27,28 +27,32 @@
 
 ## 安装
 
-推荐优先通过 **npm** 安装（免构建脚本授权）：
+完整步骤（三种安装方式、安装后确认、升级与卸载、常见问题）见 **[安装说明](docs/安装说明.md)**。
 
-- 在 DeepSeek Harness 客户端中打开 **插件 → 添加插件**，输入 `dsh-seven-inbox` 安装并启用；
-- 或通过 DSH 命令行安装：
+最省事的方式是从 npm 安装：
+
+1. 打开 DeepSeek Harness，进入「插件」页面，选择「添加插件」；
+2. 输入 `dsh-seven-inbox`，安装并启用；
+3. 完整退出 DeepSeek Harness 再重新打开。
+
+命令行等价写法：
 
 ```sh
 dsh plugin add dsh-seven-inbox
 ```
 
-同时保留 **GitHub** 安装通道：
+另外两条通道同样可用：
 
 ```sh
+# 从 GitHub 仓库安装
 dsh plugin add https://github.com/sevenqcx/dsh-seven-inbox
-```
 
-或安装 [GitHub Releases](https://github.com/sevenqcx/dsh-seven-inbox/releases) 中的正式发行包：
-
-```sh
+# 安装指定版本的发布包
 dsh plugin add https://github.com/sevenqcx/dsh-seven-inbox/releases/download/v1.0.2/dsh-seven-inbox-1.0.2.tgz
 ```
 
-安装完成后重启 DeepSeek Harness 即可生效。
+需要固定版本或离线安装时，从 [发布页](https://github.com/sevenqcx/dsh-seven-inbox/releases) 下载对应版本的 `.tgz` 安装包即可。
+
 
 ## 检查与测试
 
